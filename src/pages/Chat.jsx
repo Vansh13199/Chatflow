@@ -106,7 +106,7 @@ const Chat = ({ username, sessionKey, onLogout, isDarkMode, toggleTheme }) => {
                     />
                 </div>
             </div>
-
+{/* eubfeufhefuefubhefeubf */}
             {/* Modal for new chat */}
             {isModalOpen && (
                 <StartChatModal
