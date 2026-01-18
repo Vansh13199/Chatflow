@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  # 🐍 BACKEND SERVICE
+  backend:
+    build: ./Backend
+    container_name: chatflow-backend
+    restart: always
+    ports:
+      - "8000:8000" # Optional: Expose if you want to access API directly (Dev)
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+    depends_on:
+      - mongo
+    networks:
+      - chatflow-network
+
+  # ⚛️ FRONTEND SERVICE (Nginx)
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chatflow-frontend
+    restart: always
+    ports:
+      - "80:80"        # HTTP
+      # - "443:443"    # HTTPS (Requires cert mounting)
+    depends_on:
+      - backend
+    networks:
+      - chatflow-network
+
+  # 🍃 DATABASE SERVICE
+  mongo:
+    image: mongo:latest
+    container_name: chatflow-mongo
+    restart: always
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - chatflow-network
+
+volumes:
+  mongo_data:
+
+networks:
+  chatflow-network:
+    driver: bridge
