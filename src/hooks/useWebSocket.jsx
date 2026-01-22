@@ -18,8 +18,77 @@ if (isDev) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 
     API_BASE = `/api`; // Nginx will proxy /api to backend
-    WS_BASE = `${protocol}//${host}/ws`; // Nginx will proxy /ws to backend
+    WS_BASE = `${protocol}//${host}`; // Nginx will proxy /ws to backend
 }
+
+// Notification sound - unlocks on first user interaction
+let notificationAudio = null;
+let audioUnlocked = false;
+
+try {
+    notificationAudio = new Audio('/notification.mp3');
+    notificationAudio.preload = 'auto';
+    notificationAudio.volume = 1.0;
+} catch (e) {
+    console.warn('Could not preload notification sound:', e);
+}
+
+// Unlock audio on any user interaction
+const unlockAudio = () => {
+    if (audioUnlocked || !notificationAudio) return;
+
+    // Try to play (this unlocks audio for future plays)
+    const playPromise = notificationAudio.play();
+    if (playPromise !== undefined) {
+        playPromise.then(() => {
+            notificationAudio.pause();
+            notificationAudio.currentTime = 0;
+            audioUnlocked = true;
+            console.log('� Audio unlocked! Notification sounds will now work.');
+        }).catch(() => {
+            // Still needs interaction, will retry on next event
+        });
+    }
+};
+
+// Listen for ANY user interaction to unlock audio
+if (typeof document !== 'undefined') {
+    const events = ['click', 'touchstart', 'keydown', 'mousedown'];
+    events.forEach(event => {
+        document.addEventListener(event, unlockAudio, { passive: true });
+    });
+}
+
+// Throttle notification sound (max once every 1 minute)
+let lastNotificationTime = 0;
+const NOTIFICATION_THROTTLE_MS = 40; // 1 minute
+
+// Play notification sound (throttled)
+const playNotification = (senderName, message) => {
+    if (!notificationAudio || !audioUnlocked) {
+        if (!audioUnlocked) {
+            console.log('🔇 Audio not unlocked yet - interact with page first');
+        }
+        return;
+    }
+
+    const now = Date.now();
+    if (now - lastNotificationTime < NOTIFICATION_THROTTLE_MS) {
+        console.log('🔕 Notification throttled');
+        return;
+    }
+
+    lastNotificationTime = now;
+    const sound = notificationAudio.cloneNode();
+    sound.volume = 1.0;
+    sound.play()
+        .then(() => console.log('✅ Notification sound played!'))
+        .catch(e => console.warn('Sound failed:', e.message));
+};
+
+// Export for potential use
+export const requestNotificationPermission = async () => 'granted'; // Dummy for compatibility
+export const getNotificationPermission = () => 'granted'; // Dummy for compatibility
 
 export const useWebSocket = (myUsername) => {
     const [conversations, setConversations] = useState({});
@@ -30,6 +99,12 @@ export const useWebSocket = (myUsername) => {
     const socketRef = useRef(null);
     const reconnectAttempts = useRef(0);
     const reconnectTimeout = useRef(null);
+    const activeChatRef = useRef(null); // Track currently open chat
+
+    // Function to update which chat is currently open (call from Chat.jsx)
+    const setActiveChat = useCallback((username) => {
+        activeChatRef.current = username;
+    }, []);
 
     // --- HELPERS ---
 
@@ -199,15 +274,23 @@ export const useWebSocket = (myUsername) => {
                 const otherUser = data.sender === myUsername ? data.target : data.sender;
 
                 // Play Sound & Increment unread if receiving (not from self)
+                // BUT only if this chat is NOT currently open
                 if (data.sender !== myUsername) {
-                    const audio = new Audio('/notification.mp3');
-                    audio.play().catch(e => { });
+                    const isChatCurrentlyOpen = activeChatRef.current === otherUser;
+                    console.log('📩 Message from:', otherUser, '| Active chat:', activeChatRef.current, '| Is open:', isChatCurrentlyOpen);
 
-                    // Increment unread count for this sender
-                    setUnreadCounts(prev => ({
-                        ...prev,
-                        [otherUser]: (prev[otherUser] || 0) + 1
-                    }));
+                    if (!isChatCurrentlyOpen) {
+                        // Play notification (browser notification + sound)
+                        playNotification(otherUser, data.message);
+
+                        // Increment unread count for this sender
+                        setUnreadCounts(prev => ({
+                            ...prev,
+                            [otherUser]: (prev[otherUser] || 0) + 1
+                        }));
+                    } else {
+                        console.log('🔇 Chat is open, skipping notification');
+                    }
                 }
 
                 addMessage(otherUser, data);
@@ -402,6 +485,7 @@ export const useWebSocket = (myUsername) => {
         unreadCounts,
         sendReadReceipt,
         sendTypingIndicator,
-        clearUnread
+        clearUnread,
+        setActiveChat // Sync active chat state to prevent unread on open chats
     };
 };

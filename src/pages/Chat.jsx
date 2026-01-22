@@ -20,15 +20,17 @@ const Chat = ({ username, sessionKey, onLogout, isDarkMode, toggleTheme }) => {
         unreadCounts,
         sendReadReceipt,
         sendTypingIndicator,
-        clearUnread
+        clearUnread,
+        setActiveChat: setActiveChatInHook // Sync active chat to hook
     } = useWebSocket(username, sessionKey);
 
     const [activeChat, setActiveChat] = useState(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
 
-    // Handle selecting a chat (also clears unread)
+    // Handle selecting a chat (also clears unread and syncs to hook)
     const handleSelectChat = (user) => {
         setActiveChat(user);
+        setActiveChatInHook(user); // Sync to hook so it knows which chat is open
         clearUnread(user);
     };
 
@@ -89,7 +91,10 @@ const Chat = ({ username, sessionKey, onLogout, isDarkMode, toggleTheme }) => {
                         messages={activeChat ? conversations[activeChat] || [] : []}
                         currentUser={username}
                         onSendMessage={sendMessage}
-                        onBack={() => setActiveChat(null)}
+                        onBack={() => {
+                            setActiveChat(null);
+                            setActiveChatInHook(null); // Sync to hook when closing chat
+                        }}
                         isTyping={activeChat ? typingUsers[activeChat] : false}
                         userStatus={activeChat ? userStatuses[activeChat] : null}
                         onTyping={(isTyping) => sendTypingIndicator(activeChat, isTyping)}
@@ -99,6 +104,7 @@ const Chat = ({ username, sessionKey, onLogout, isDarkMode, toggleTheme }) => {
                         onDeleteChat={() => {
                             deleteChat(activeChat);
                             setActiveChat(null);
+                            setActiveChatInHook(null);
                         }}
                         onClearHistory={() => {
                             clearChatHistory(activeChat);
@@ -106,7 +112,7 @@ const Chat = ({ username, sessionKey, onLogout, isDarkMode, toggleTheme }) => {
                     />
                 </div>
             </div>
-{/* eubfeufhefuefubhefeubf */}
+
             {/* Modal for new chat */}
             {isModalOpen && (
                 <StartChatModal
@@ -116,6 +122,7 @@ const Chat = ({ username, sessionKey, onLogout, isDarkMode, toggleTheme }) => {
                         const success = await startChat(target);
                         if (success) {
                             setActiveChat(target);
+                            setActiveChatInHook(target); // Sync to hook
                             setIsModalOpen(false);
                             return true;
                         }
