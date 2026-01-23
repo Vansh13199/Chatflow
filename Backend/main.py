@@ -5,19 +5,22 @@ from datetime import datetime
 import json
 import os
 from typing import Dict
+from dotenv import load_dotenv
+
+load_dotenv() # Load environment variables from .env
 
 app = FastAPI()
 
 # --- CORS SETUP (Allow Frontend) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify ["http://localhost:5173"]
+    allow_origins=["*"],  # Allow all origins for development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- DATABASE SETUP ---
+# --- DATABASE SETUP ---0.0.
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 client = AsyncIOMotorClient(MONGO_URI)
 db = client.chat_db
@@ -196,7 +199,50 @@ async def delete_single_message(message_id: float):
 
     return {"status": "success"}
 
-# --- NEW: LOAD ALL CONVERSATIONS FOR A USER ---
+
+# --- NEW: SEARCH MESSAGES FOR A USER ---
+# Using /search/messages/{username} to avoid any route conflicts
+@app.get("/search/messages/{username}")
+async def search_user_messages(username: str, q: str = ""):
+    """Search messages containing the query string (minimum 3 characters)."""
+    # Validate minimum query length
+    if len(q) < 3:
+        return {"results": [], "error": "Query must be at least 3 characters"}
+    
+    # Search messages where user is sender or target and message contains query
+    # Using case-insensitive regex search
+    messages = await messages_collection.find({
+        "$and": [
+            {
+                "$or": [
+                    {"sender": username},
+                    {"target": username}
+                ]
+            },
+            {
+                "message": {"$regex": q, "$options": "i"}
+            }
+        ]
+    }).sort("timestamp", -1).to_list(length=50)  # Limit to 50 results
+    
+    # Format results with conversation partner info
+    results = []
+    for msg in messages:
+        partner = msg["target"] if msg["sender"] == username else msg["sender"]
+        results.append({
+            "id": msg["id"],
+            "sender": msg["sender"],
+            "target": msg["target"],
+            "partner": partner,
+            "message": msg["message"],
+            "timestamp": msg["timestamp"],
+            "status": msg.get("status", "sent")
+        })
+    
+    return {"results": results}
+
+
+# --- LOAD ALL CONVERSATIONS FOR A USER ---
 @app.get("/messages/{username}")
 async def get_user_messages(username: str):
     """Fetch all messages where the user is sender or target, grouped by conversation partner."""
@@ -303,6 +349,30 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                          "type": "bulk_read_update",
                          "reader": username
                      }))
+
+            # --- SMART SUMMARY REQUEST ---
+            elif payload.get("type") == "get_summary":
+                target_user = payload.get("with_user")
+                if target_user:
+                    # Fetch conversation history for these two users
+                    # Similar logic to get_user_messages but internal
+                    msgs = await messages_collection.find({
+                        "$or": [
+                            {"sender": username, "target": target_user},
+                            {"sender": target_user, "target": username}
+                        ]
+                    }).sort("timestamp", 1).to_list(length=100) # Analyze last 100 messages
+                    
+                    # Generate Summary
+                    from chat_summary import generate_chat_summary
+                    summary_data = generate_chat_summary(msgs)
+                    
+                    # Send back to requester
+                    await websocket.send_text(json.dumps({
+                        "type": "chat_summary",
+                        "summary": summary_data["summary"],
+                        "updated_at": summary_data["updated_at"]
+                    }))
 
             # --- TYPING INDICATOR ---
             elif payload.get("type") == "typing":
