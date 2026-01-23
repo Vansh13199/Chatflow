@@ -1,7 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
-import EmojiPicker from 'emoji-picker-react';
+import React, { useState, useRef, useEffect, memo, lazy, Suspense } from 'react';
 
-const MessageInput = ({ onSend, onTyping }) => {
+// Lazy load the heavy emoji picker component
+const EmojiPicker = lazy(() => import('emoji-picker-react'));
+
+const MessageInput = memo(({ onSend, onTyping }) => {
   const [text, setText] = useState('');
   const [showPicker, setShowPicker] = useState(false);
   const textareaRef = useRef(null);
@@ -84,19 +86,25 @@ const MessageInput = ({ onSend, onTyping }) => {
   return (
     <div className="p-3 bg-white dark:bg-gray-800 border-t border-gray-100 dark:border-gray-700 relative">
 
-      {/* EMOJI POPUP */}
+      {/* EMOJI POPUP - Lazy loaded */}
       {showPicker && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setShowPicker(false)}></div>
           <div className="absolute bottom-20 left-4 z-50 shadow-2xl rounded-xl">
-            <EmojiPicker
-              onEmojiClick={onEmojiClick}
-              theme="auto"
-              searchDisabled={false}
-              skinTonesDisabled={true}
-              height={350}
-              width={300}
-            />
+            <Suspense fallback={
+              <div className="w-[300px] h-[350px] bg-white dark:bg-gray-700 rounded-xl flex items-center justify-center">
+                <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full"></div>
+              </div>
+            }>
+              <EmojiPicker
+                onEmojiClick={onEmojiClick}
+                theme="auto"
+                searchDisabled={false}
+                skinTonesDisabled={true}
+                height={350}
+                width={300}
+              />
+            </Suspense>
           </div>
         </>
       )}
@@ -146,6 +154,8 @@ const MessageInput = ({ onSend, onTyping }) => {
       </form>
     </div>
   );
-};
+});
+
+MessageInput.displayName = 'MessageInput';
 
 export default MessageInput;

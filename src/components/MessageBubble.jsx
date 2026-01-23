@@ -1,7 +1,62 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
 
-const MessageBubble = ({ message, isMe, onDelete }) => {
+// Helper function to get responsive line threshold based on screen width
+const getLineThreshold = () => {
+  if (typeof window === 'undefined') return 8;
+  const width = window.innerWidth;
+  if (width < 640) return 6;       // Mobile: 6 lines
+  if (width < 1024) return 10;     // Tablet: 10 lines
+  return 12;                        // Desktop: 12 lines
+};
+
+const MessageBubble = memo(({ message, isMe, onDelete, isHighlighted = false }) => {
   const [showActions, setShowActions] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [shouldCollapse, setShouldCollapse] = useState(false);
+  const [lineThreshold, setLineThreshold] = useState(getLineThreshold());
+  const textRef = useRef(null);
+
+  // Update line threshold on window resize
+  useEffect(() => {
+    const handleResize = () => {
+      setLineThreshold(getLineThreshold());
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Check if message should be collapsed based on actual rendered height
+  const checkCollapsibility = useCallback(() => {
+    if (textRef.current) {
+      const lineHeight = parseFloat(getComputedStyle(textRef.current).lineHeight) || 24;
+      const actualHeight = textRef.current.scrollHeight;
+      const maxHeight = lineHeight * lineThreshold;
+
+      setShouldCollapse(actualHeight > maxHeight);
+    }
+  }, [lineThreshold]);
+
+  // Check collapsibility on mount and when message or threshold changes
+  useEffect(() => {
+    checkCollapsibility();
+  }, [message.message, lineThreshold, checkCollapsibility]);
+
+  // Also check after fonts load
+  useEffect(() => {
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(checkCollapsibility);
+    }
+  }, [checkCollapsibility]);
+
+  // Calculate max-height for collapsed state (in pixels based on line height)
+  const getCollapsedMaxHeight = () => {
+    if (textRef.current) {
+      const lineHeight = parseFloat(getComputedStyle(textRef.current).lineHeight) || 24;
+      return `${lineHeight * lineThreshold}px`;
+    }
+    return `${lineThreshold * 1.5}rem`; // Fallback
+  };
 
   return (
     <div
@@ -26,32 +81,79 @@ const MessageBubble = ({ message, isMe, onDelete }) => {
 
       {/* THE BUBBLE */}
       <div
-        className={`relative max-w-[75%] md:max-w-[60%] px-3 py-1.5 rounded-lg shadow-sm text-[15px] leading-relaxed overflow-hidden
-          ${isMe
-            ? 'bg-[#d9fdd3] dark:bg-[#005c4b] text-gray-900 dark:text-white rounded-tr-none'
-            : 'bg-white dark:bg-[#202c33] text-gray-900 dark:text-white rounded-tl-none'
+        className={`relative max-w-[75%] md:max-w-[60%] px-3 py-1.5 rounded-lg shadow-sm text-[15px] leading-snug overflow-hidden transition-all duration-700 ease-in-out ring-2
+          ${isHighlighted
+            ? 'bg-yellow-200/50 dark:bg-yellow-900/50 ring-yellow-400/50 dark:ring-yellow-600/50 text-gray-900 dark:text-gray-100 scale-[1.02]'
+            : isMe
+              ? 'bg-[#d9fdd3] dark:bg-[#005c4b] ring-transparent text-gray-900 dark:text-white rounded-tr-none'
+              : 'bg-white dark:bg-[#202c33] ring-transparent text-gray-900 dark:text-white rounded-tl-none'
           }`}
         style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
       >
-        <p className="mb-1 whitespace-pre-wrap">{message.message}</p>
+        {/* Message Text Container */}
+        <div className="relative">
+          <p
+            ref={textRef}
+            className="whitespace-pre-wrap transition-all duration-300 ease-in-out overflow-hidden"
+            style={{
+              maxHeight: shouldCollapse && !isExpanded ? getCollapsedMaxHeight() : 'none',
+            }}
+          >
+            {message.message}
+          </p>
 
-        <div className={`text-[10px] flex justify-end items-center gap-1 
-            ${isMe ? 'text-gray-500 dark:text-gray-300' : 'text-gray-400 dark:text-gray-400'}`}
-        >
-          <span>
-            {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
-          </span>
-          {isMe && (
-            <span className={message.status === 'read' ? 'text-blue-500' : ''}>
-              {message.status === 'sent' && '✓'}
-              {message.status === 'delivered' && '✓✓'}
-              {message.status === 'read' && '✓✓'}
-            </span>
+          {/* Fade overlay when collapsed */}
+          {shouldCollapse && !isExpanded && (
+            <div
+              className={`absolute bottom-0 left-0 right-0 h-5 pointer-events-none
+                ${isMe
+                  ? 'bg-gradient-to-t from-[#d9fdd3] dark:from-[#005c4b] to-transparent'
+                  : 'bg-gradient-to-t from-white dark:from-[#202c33] to-transparent'
+                }`}
+            />
           )}
         </div>
+
+        {/* Footer: Read More Button + Timestamp */}
+        <div className={`text-[10px] flex items-center gap-2 ${shouldCollapse ? 'justify-between' : 'justify-end'} 
+            ${isMe ? 'text-gray-500 dark:text-gray-300' : 'text-gray-400 dark:text-gray-400'}`}
+        >
+          {/* Read More / Show Less Button */}
+          {shouldCollapse && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsExpanded(!isExpanded);
+              }}
+              className={`text-[11px] font-medium hover:underline focus:outline-none transition-colors
+                ${isMe
+                  ? 'text-[#075e54] dark:text-[#25d366]'
+                  : 'text-[#075e54] dark:text-[#25d366]'
+                }`}
+            >
+              {isExpanded ? 'Show less' : 'Read more'}
+            </button>
+          )}
+
+          <div className="flex items-center gap-1">
+            <span>
+              {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+            </span>
+            {isMe && (
+              <span className={message.status === 'read' ? 'text-blue-500' : ''}>
+                {message.status === 'sent' && '✓'}
+                {message.status === 'delivered' && '✓✓'}
+                {message.status === 'read' && '✓✓'}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
-    </div>
+    </div >
   );
-};
+});
+
+// Display name for debugging
+MessageBubble.displayName = 'MessageBubble';
 
 export default MessageBubble;

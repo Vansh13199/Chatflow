@@ -28,7 +28,7 @@ let audioUnlocked = false;
 try {
     notificationAudio = new Audio('/notification.mp3');
     notificationAudio.preload = 'auto';
-    notificationAudio.volume = 1.0;
+    notificationAudio.volume = 0; // Start silent to avoid "pop" on unlock
 } catch (e) {
     console.warn('Could not preload notification sound:', e);
 }
@@ -37,14 +37,14 @@ try {
 const unlockAudio = () => {
     if (audioUnlocked || !notificationAudio) return;
 
-    // Try to play (this unlocks audio for future plays)
+    // Play silent audio to unlock autoplay
     const playPromise = notificationAudio.play();
     if (playPromise !== undefined) {
         playPromise.then(() => {
             notificationAudio.pause();
             notificationAudio.currentTime = 0;
             audioUnlocked = true;
-            console.log('� Audio unlocked! Notification sounds will now work.');
+            console.log('🔇 Audio unlocked silently');
         }).catch(() => {
             // Still needs interaction, will retry on next event
         });
@@ -61,7 +61,7 @@ if (typeof document !== 'undefined') {
 
 // Throttle notification sound (max once every 1 minute)
 let lastNotificationTime = 0;
-const NOTIFICATION_THROTTLE_MS = 40; // 1 minute
+const NOTIFICATION_THROTTLE_MS = 60000; // 1 minute
 
 // Play notification sound (throttled)
 const playNotification = (senderName, message) => {
@@ -80,7 +80,7 @@ const playNotification = (senderName, message) => {
 
     lastNotificationTime = now;
     const sound = notificationAudio.cloneNode();
-    sound.volume = 1.0;
+    sound.volume = 1.0; // Set volume to 1.0 for actual notification
     sound.play()
         .then(() => console.log('✅ Notification sound played!'))
         .catch(e => console.warn('Sound failed:', e.message));
@@ -261,7 +261,13 @@ export const useWebSocket = (myUsername) => {
                     return;
                 }
 
-                // 4. TYPING INDICATOR
+                // 4. CHAT SUMMARY RECEIVED
+                if (data.type === "chat_summary") {
+                    setActiveSummary(data);
+                    return;
+                }
+
+                // 20. TYPING INDICATOR
                 if (data.type === "typing_indicator") {
                     setTypingUsers(prev => ({
                         ...prev,
@@ -472,6 +478,21 @@ export const useWebSocket = (myUsername) => {
         });
     }, []);
 
+    // 8. REQUEST SUMMARY
+    const [activeSummary, setActiveSummary] = useState(null);
+
+    const requestSummary = useCallback((targetUsername) => {
+        if (!targetUsername || !socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
+
+        // Clear previous summary
+        setActiveSummary(null);
+
+        socketRef.current.send(JSON.stringify({
+            type: "get_summary",
+            with_user: targetUsername
+        }));
+    }, []);
+
     return {
         conversations,
         startChat,
@@ -486,6 +507,8 @@ export const useWebSocket = (myUsername) => {
         sendReadReceipt,
         sendTypingIndicator,
         clearUnread,
-        setActiveChat // Sync active chat state to prevent unread on open chats
+        requestSummary,
+        activeSummary,
+        setActiveChatInHook: setActiveChat // Export this so Chat.jsx can sync state
     };
 };

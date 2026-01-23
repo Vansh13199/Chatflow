@@ -21,17 +21,29 @@ const Chat = ({ username, sessionKey, onLogout, isDarkMode, toggleTheme }) => {
         sendReadReceipt,
         sendTypingIndicator,
         clearUnread,
-        setActiveChat: setActiveChatInHook // Sync active chat to hook
+        setActiveChatInHook: setActiveChatInHook, // Sync active chat to hook
+        requestSummary,
+        activeSummary
     } = useWebSocket(username, sessionKey);
 
     const [activeChat, setActiveChat] = useState(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [scrollToMessageId, setScrollToMessageId] = useState(null);
 
     // Handle selecting a chat (also clears unread and syncs to hook)
-    const handleSelectChat = (user) => {
+    // Optional messageId param for jumping to a specific message from search
+    const handleSelectChat = (user, messageId = null) => {
         setActiveChat(user);
         setActiveChatInHook(user); // Sync to hook so it knows which chat is open
         clearUnread(user);
+        if (messageId) {
+            setScrollToMessageId(messageId);
+        }
+    };
+
+    // Clear scrollToMessageId after it's been used
+    const clearScrollToMessage = () => {
+        setScrollToMessageId(null);
     };
 
     // Responsive: If on mobile, hide list when chat is open
@@ -81,6 +93,7 @@ const Chat = ({ username, sessionKey, onLogout, isDarkMode, toggleTheme }) => {
                         onOpenNewChat={() => setIsModalOpen(true)}
                         userStatuses={userStatuses}
                         unreadCounts={unreadCounts}
+                        username={username}
                     />
                 </div>
 
@@ -99,6 +112,10 @@ const Chat = ({ username, sessionKey, onLogout, isDarkMode, toggleTheme }) => {
                         userStatus={activeChat ? userStatuses[activeChat] : null}
                         onTyping={(isTyping) => sendTypingIndicator(activeChat, isTyping)}
 
+                        // Jump to message from search
+                        scrollToMessageId={scrollToMessageId}
+                        onScrollComplete={clearScrollToMessage}
+
                         // Actions
                         onDeleteMessage={deleteMessage}
                         onDeleteChat={() => {
@@ -109,6 +126,10 @@ const Chat = ({ username, sessionKey, onLogout, isDarkMode, toggleTheme }) => {
                         onClearHistory={() => {
                             clearChatHistory(activeChat);
                         }}
+
+                        // Summary
+                        onRequestSummary={() => requestSummary(activeChat)}
+                        summaryData={activeSummary}
                     />
                 </div>
             </div>
