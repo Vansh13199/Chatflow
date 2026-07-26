@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8000';
+
 export const useWebSocket = (myUsername) => {
     const [conversations, setConversations] = useState({});
     const [userStatuses, setUserStatuses] = useState({}); // Stores { "UserB": "online" }
@@ -61,7 +64,7 @@ export const useWebSocket = (myUsername) => {
     // Load chat history from database
     const loadChatHistory = async () => {
         try {
-            const response = await fetch(`http://127.0.0.1:8000/messages/${myUsername}`);
+            const response = await fetch(`${API_URL}/messages/${myUsername}`);
             if (response.ok) {
                 const data = await response.json();
                 if (data.conversations) {
@@ -81,8 +84,8 @@ export const useWebSocket = (myUsername) => {
         // Load existing messages first
         loadChatHistory();
 
-        console.log(`🔌 Connecting to ws://127.0.0.1:8000/ws/${myUsername}...`);
-        const ws = new WebSocket(`ws://127.0.0.1:8000/ws/${myUsername}`);
+        console.log(`🔌 Connecting to ${WS_URL}/ws/${myUsername}...`);
+        const ws = new WebSocket(`${WS_URL}/ws/${myUsername}`);
         socketRef.current = ws;
 
         ws.onopen = () => {
@@ -185,8 +188,8 @@ export const useWebSocket = (myUsername) => {
 
             reconnectTimeout.current = setTimeout(() => {
                 if (myUsername && !socketRef.current) {
-                    console.log(`🔌 Attempting reconnect to ws://127.0.0.1:8000/ws/${myUsername}...`);
-                    const newWs = new WebSocket(`ws://127.0.0.1:8000/ws/${myUsername}`);
+                    console.log(`🔌 Attempting reconnect to ${WS_URL}/ws/${myUsername}...`);
+                    const newWs = new WebSocket(`${WS_URL}/ws/${myUsername}`);
                     socketRef.current = newWs;
 
                     newWs.onopen = ws.onopen;
@@ -220,7 +223,7 @@ export const useWebSocket = (myUsername) => {
 
         try {
             // C. API Check
-            const response = await fetch(`http://127.0.0.1:8000/check_user/${targetUsername}`);
+            const response = await fetch(`${API_URL}/check_user/${targetUsername}`);
 
             if (!response.ok) {
                 return false; // ❌ Return false, don't alert
@@ -293,7 +296,7 @@ export const useWebSocket = (myUsername) => {
 
         try {
             // 👇 Send ?type=delete
-            await fetch(`http://127.0.0.1:8000/chat/${myUsername}/${targetUsername}?type=delete`, {
+            await fetch(`${API_URL}/chat/${myUsername}/${targetUsername}?type=delete`, {
                 method: 'DELETE'
             });
         } catch (err) { console.error(err); }
@@ -306,7 +309,7 @@ export const useWebSocket = (myUsername) => {
 
         try {
             // 👇 Send ?type=clear
-            await fetch(`http://127.0.0.1:8000/chat/${myUsername}/${targetUsername}?type=clear`, {
+            await fetch(`${API_URL}/chat/${myUsername}/${targetUsername}?type=clear`, {
                 method: 'DELETE'
             });
         } catch (err) { console.error(err); }
@@ -323,7 +326,7 @@ export const useWebSocket = (myUsername) => {
 
         // Call Backend
         try {
-            await fetch(`http://127.0.0.1:8000/message/${msgId}`, { method: 'DELETE' });
+            await fetch(`${API_URL}/message/${msgId}`, { method: 'DELETE' });
         } catch (err) { console.error("Failed to delete message:", err); }
     };
 

@@ -9,16 +9,19 @@ from typing import Dict
 app = FastAPI()
 
 # --- CORS SETUP (Allow Frontend) ---
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*")
+origins = ALLOWED_ORIGINS.split(",") if ALLOWED_ORIGINS != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify ["http://localhost:5173"]
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # --- DATABASE SETUP ---
-MONGO_URI = "mongodb://localhost:27017"
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
 client = AsyncIOMotorClient(MONGO_URI)
 db = client.chat_db
 users_collection = db.users
