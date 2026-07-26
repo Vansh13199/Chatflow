@@ -94,6 +94,22 @@ export const useWebSocket = (myUsername) => {
                 setIsConnected(true);
                 reconnectAttempts.current = 0;
 
+                // Fetch all currently online users (reliable HTTP fallback)
+                fetch(`${API_URL}/online_users`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.online) {
+                            setUserStatuses(prev => {
+                                const updated = { ...prev };
+                                // Mark everyone as offline first, then set online ones
+                                Object.keys(updated).forEach(u => updated[u] = 'offline');
+                                data.online.forEach(u => { if (u !== myUsername) updated[u] = 'online'; });
+                                return updated;
+                            });
+                        }
+                    })
+                    .catch(e => console.error("Failed to fetch online users:", e));
+
                 // Heartbeat: Send ping every 25s to keep connection alive on Render
                 if (heartbeatInterval) clearInterval(heartbeatInterval);
                 heartbeatInterval = setInterval(() => {

@@ -134,6 +134,11 @@ manager = ConnectionManager()
 
 # --- API ENDPOINTS ---
 
+@app.get("/online_users")
+async def get_online_users():
+    """Return list of currently connected usernames."""
+    return {"online": list(manager.active_connections.keys())}
+
 @app.get("/check_user/{username}")
 async def check_user(username: str):
     user = await users_collection.find_one({"username": username})
