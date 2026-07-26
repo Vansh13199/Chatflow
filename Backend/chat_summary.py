@@ -40,22 +40,12 @@ def generate_chat_summary(messages: list) -> dict:
         content = msg.get("message", "")
         conversation_text += f"{sender}: {content}\n"
 
-    # 3. Construct Prompt (Mistral instruction format)
-    prompt_text = f"""<s>[INST] You are an intelligent assistant summarizing a chat conversation.
-Summarize the following conversation in 3-5 concise bullet points.
-Focus on the main topics discussed, key decisions, or interesting updates.
-Do not use asterisks or dashes for bullets in your raw output, just put each point on a new line.
-Keep it casual but clear.
-
-Conversation:
-{conversation_text}
-[/INST]
-"""
+    # 3. Construct Prompt (BART format - pure transcript)
+    prompt_text = f"The following is a conversation between users:\n{conversation_text}\nSummary:"
 
     def call_hf_api(prompt_text, api_key):
-        # We use Mistral 7B Instruct v0.3 as it is highly capable and supported by the new HF Serverless Inference Router
-        # Using the router endpoint to bypass DNS issues on some ISPs with the api-inference domain
-        url = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3"
+        # We use BART Large CNN as it is a dedicated summarization model natively supported by the new HF Serverless Inference Router
+        url = "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
@@ -63,9 +53,9 @@ Conversation:
         payload = {
             "inputs": prompt_text,
             "parameters": {
-                "max_new_tokens": 250,
-                "temperature": 0.3,
-                "return_full_text": False
+                "max_length": 150,
+                "min_length": 30,
+                "temperature": 0.5
             }
         }
         return requests.post(url, headers=headers, json=payload, timeout=15)
@@ -81,19 +71,22 @@ Conversation:
         
         # 5. Parse Response
         try:
-            # Inference API returns a list with a dict containing 'generated_text'
-            if isinstance(result, list) and len(result) > 0 and 'generated_text' in result[0]:
+            if isinstance(result, list) and len(result) > 0 and 'summary_text' in result[0]:
+                summary_text = result[0]['summary_text']
+            elif isinstance(result, list) and len(result) > 0 and 'generated_text' in result[0]:
                 summary_text = result[0]['generated_text']
             else:
                 summary_text = str(result)
         except Exception as e:
             raise Exception(f"Unexpected API response structure: {str(e)} | Response: {str(result)}")
         
-        lines = summary_text.strip().split('\n')
-        bullet_points = [line.strip().lstrip('-•* ').strip() for line in lines if line.strip()]
+        # Split paragraph into sentences to fake bullet points
+        sentences = [s.strip() for s in summary_text.replace('!', '.').replace('?', '.').split('.') if len(s.strip()) > 10]
         
-        if not bullet_points:
-            bullet_points = ["Could not generate a summary at this time."]
+        if not sentences:
+            sentences = [summary_text]
+            
+        bullet_points = sentences[:5] # Keep max 5 bullet points
 
         return {
             "summary": bullet_points,
