@@ -45,6 +45,20 @@ class ConnectionManager:
         
         # Broadcast "User is Online" to everyone
         await self.broadcast_status(username, "online")
+        
+        # Send the newly connected user the list of all currently online users
+        for other_user in self.active_connections:
+            if other_user != username:
+                try:
+                    await websocket.send_text(json.dumps({
+                        "type": "status_update",
+                        "username": other_user,
+                        "status": "online",
+                        "timestamp": datetime.now().isoformat()
+                    }))
+                except RuntimeError:
+                    pass
+        
         print(f"🔵 {username} connected.")
 
     def disconnect(self, username: str):
