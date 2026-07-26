@@ -5,27 +5,28 @@ from datetime import datetime
 import json
 import os
 from typing import Dict
+from dotenv import load_dotenv
+
+load_dotenv() # Load environment variables from .env
 
 app = FastAPI()
 
 # --- CORS SETUP (Allow Frontend) ---
-ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*")
-origins = ALLOWED_ORIGINS.split(",") if ALLOWED_ORIGINS != "*" else ["*"]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # Allow all origins for development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # --- DATABASE SETUP ---
-MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 client = AsyncIOMotorClient(MONGO_URI)
 db = client.chat_db
 users_collection = db.users
 messages_collection = db.messages
+summaries_collection = db.summaries
 
 # --- CONNECTION MANAGER (Robust Version) ---
 class ConnectionManager:
@@ -43,28 +44,49 @@ class ConnectionManager:
             upsert=True
         )
         
-        # Broadcast "User is Online" to everyone
+        # Broadcast "User is Online" to everyone (including the new user)
         await self.broadcast_status(username, "online")
         
-        # Send the newly connected user the list of all currently online users
-        for other_user in self.active_connections:
-            if other_user != username:
-                try:
-                    await websocket.send_text(json.dumps({
-                        "type": "status_update",
-                        "username": other_user,
-                        "status": "online",
-                        "timestamp": datetime.now().isoformat()
-                    }))
-                except RuntimeError:
-                    pass
-        
-        print(f"🔵 {username} connected.")
+        # Send the new user the status of ALL users (offline with last_seen, and online)
+        all_users = await users_collection.find().to_list(length=1000)
+        for user in all_users:
+            uname = user.get("username")
+            if uname == username:
+                continue
+            
+            # Determine status: "online" if in active_connections, else "offline" or DB status
+            status = "online" if uname in self.active_connections else user.get("status", "offline")
+            last_seen = user.get("last_seen")
+            
+            # If online, timestamp is now. If offline, use DB value.
+            timestamp = datetime.now().isoformat() if status == "online" else (last_seen.isoformat() if last_seen else None)
 
-    def disconnect(self, username: str):
+            try:
+                await websocket.send_text(json.dumps({
+                    "type": "status_update",
+                    "username": uname,
+                    "status": status,
+                    "timestamp": timestamp
+                }))
+            except:
+                pass
+        
+        print(f"[CONNECTED] {username}. Online users: {list(self.active_connections.keys())}")
+
+    async def disconnect(self, username: str):
         if username in self.active_connections:
             del self.active_connections[username]
-        print(f"🔴 {username} disconnected.")
+        
+        # Update DB: Set User Offline with Timestamp
+        await users_collection.update_one(
+            {"username": username},
+            {"$set": {"status": "offline", "last_seen": datetime.now()}}
+        )
+        
+        # Broadcast Offline Status
+        await self.broadcast_status(username, "offline")
+        
+        print(f"[DISCONNECTED] {username}.")
 
     # 1. BROADCAST STATUS (Safely handles dead connections)
     async def broadcast_status(self, username: str, status: str):
@@ -161,6 +183,11 @@ async def delete_chat_history(user1: str, user2: str, type: str = "clear"):
     # type="clear"  -> Keeps contact, empties messages ("chat_cleared")
     signal_type = "chat_removed" if type == "delete" else "chat_cleared"
 
+    # Delete Summaries
+    await summaries_collection.delete_many({
+        "participants": {"$all": [user1, user2]}
+    })
+
     # Notify BOTH users
     await manager.notify_chat_update(user1, user2, signal_type)
     await manager.notify_chat_update(user2, user1, signal_type)
@@ -183,28 +210,164 @@ async def delete_single_message(message_id: float):
 
     return {"status": "success"}
 
-# --- NEW: LOAD ALL CONVERSATIONS FOR A USER ---
+
+# --- NEW: SEARCH MESSAGES FOR A USER ---
+# Using /search/messages/{username} to avoid any route conflicts
+@app.get("/search/messages/{username}")
+async def search_user_messages(username: str, q: str = ""):
+    """Search messages containing the query string (minimum 3 characters)."""
+    # Validate minimum query length
+    if len(q) < 3:
+        return {"results": [], "error": "Query must be at least 3 characters"}
+    
+    # Search messages where user is sender or target and message contains query
+    # Using case-insensitive regex search
+    messages = await messages_collection.find({
+        "$and": [
+            {
+                "$or": [
+                    {"sender": username},
+                    {"target": username}
+                ]
+            },
+            {
+                "message": {"$regex": q, "$options": "i"}
+            }
+        ]
+    }).sort("timestamp", -1).to_list(length=50)  # Limit to 50 results
+    
+    # Format results with conversation partner info
+    results = []
+    for msg in messages:
+        partner = msg["target"] if msg["sender"] == username else msg["sender"]
+        results.append({
+            "id": msg["id"],
+            "sender": msg["sender"],
+            "target": msg["target"],
+            "partner": partner,
+            "message": msg["message"],
+            "timestamp": msg["timestamp"],
+            "status": msg.get("status", "sent")
+        })
+    
+    return {"results": results}
+
+
+# --- LOAD ALL CONVERSATIONS FOR A USER ---
+
+# --- LOAD SIDEBAR (Last Message only) ---
 @app.get("/messages/{username}")
 async def get_user_messages(username: str):
-    """Fetch all messages where the user is sender or target, grouped by conversation partner."""
-    messages = await messages_collection.find({
-        "$or": [
-            {"sender": username},
-            {"target": username}
-        ]
-    }).sort("timestamp", 1).to_list(length=1000)
-    
-    # Group messages by conversation partner
+    """
+    Fetch the LAST message for each conversation partner (for the Sidebar).
+    """
+    pipeline = [
+        # 1. Match messages where user is sender OR target
+        {
+            "$match": {
+                "$or": [{"sender": username}, {"target": username}]
+            }
+        },
+        # 2. Sort by timestamp descending (newest first)
+        {"$sort": {"timestamp": -1}},
+        # 3. Add 'partner' field to group by
+        {
+            "$addFields": {
+                "partner": {
+                    "$cond": {
+                        "if": {"$eq": ["$sender", username]},
+                        "then": "$target",
+                        "else": "$sender"
+                    }
+                }
+            }
+        },
+        # 4. Group by partner and take the first (latest) document AND count unread
+        {
+            "$group": {
+                "_id": "$partner",
+                "last_message": {"$first": "$$ROOT"},
+                "unread_count": {
+                    "$sum": {
+                        "$cond": [
+                            {"$and": [
+                                {"$eq": ["$target", username]},     # I am the target
+                                {"$ne": ["$status", "read"]}        # Status is NOT read
+                            ]},
+                            1,
+                            0
+                        ]
+                    }
+                }
+            }
+        },
+        # 5. Project format
+        {
+            "$project": {
+                "_id": 0,
+                "partner": "$_id",
+                "last_message": 1,
+                "unread_count": 1
+            }
+        }
+    ]
+
+    cursor = messages_collection.aggregate(pipeline)
+    results = await cursor.to_list(length=None)
+
+    # Format for frontend (matches expected 'conversations' map structure but only 1 item)
     conversations = {}
+    for res in results:
+        partner = res["partner"]
+        msg = res["last_message"]
+        
+        conversations[partner] = [{
+            "id": msg["id"],
+            "sender": msg["sender"],
+            "target": msg["target"],
+            "message": msg["message"],
+            "type": msg.get("type", "text"),
+            "timestamp": msg["timestamp"],
+            "status": msg.get("status", "sent"),
+            "_unread_count": res["unread_count"] # Pass this if needed for UI, or UI calculates
+        }]
+    
+    return {"conversations": conversations}
+
+
+# --- PAGINATED CHAT HISTORY ---
+@app.get("/chat_history/{user1}/{user2}")
+async def get_chat_history(user1: str, user2: str, limit: int = 50, before: str = None):
+    """
+    Fetch paginated chat history between two users.
+    'before': ISO timestamp string. Get messages OLDER than this time.
+    """
+    
+    query = {
+        "$or": [
+            {"sender": user1, "target": user2},
+            {"sender": user2, "target": user1}
+        ]
+    }
+    
+    # Pagination cursor
+    if before:
+        query["timestamp"] = {"$lt": before}
+        
+    messages = await messages_collection.find(query)\
+        .sort("timestamp", -1)\
+        .limit(limit)\
+        .to_list(length=limit)
+        
+    # Reverse to return in Chronological Order (Oldest -> Newest)
+    # Frontend appends these to the TOP, so it might actually want them Reversed?
+    # Usually "History" API returns chunk [Newest ... Oldest] or [Oldest ... Newest].
+    # Let's return [Oldest ... Newest] so it looks like a normal chat segment.
+    messages.reverse() 
+    
+    results = []
     for msg in messages:
-        # Determine conversation partner
-        partner = msg["target"] if msg["sender"] == username else msg["sender"]
-        
-        if partner not in conversations:
-            conversations[partner] = []
-        
-        # Convert ObjectId to string and format for frontend
-        conversations[partner].append({
+        results.append({
             "id": msg["id"],
             "sender": msg["sender"],
             "target": msg["target"],
@@ -213,8 +376,8 @@ async def get_user_messages(username: str):
             "timestamp": msg["timestamp"],
             "status": msg.get("status", "sent")
         })
-    
-    return {"conversations": conversations}
+        
+    return {"messages": results}
 
 
 # --- WEBSOCKET ENDPOINT ---
@@ -246,7 +409,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             if payload.get("type") == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
                 continue
-
+            
             # --- SENDING TEXT ---
             if payload.get("type") in ["text", "image"]:
                 msg_id = payload.get("id") or datetime.now().timestamp()
@@ -296,12 +459,166 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                          "reader": username
                      }))
 
+            # --- FETCH SAVED SUMMARY (No Generation) ---
+            elif payload.get("type") == "fetch_summary":
+                target_user = payload.get("with_user")
+                if target_user:
+                    # Find existing summary for this pair
+                    # We store participants as a sorted list to ensure consistency, or use $all
+                    # Let's use $all for query, but we might want a consistent way to key them.
+                    # Actually, standardizing on sorted participants is better for unique constraints, 
+                    # but $all is fine for retrieval.
+                    
+                    existing_summary = await summaries_collection.find_one({
+                        "participants": {"$all": [username, target_user]}
+                    })
+                    
+                    if existing_summary:
+                        await websocket.send_text(json.dumps({
+                            "type": "chat_summary",
+                            "summary": existing_summary["summary"],
+                            "updated_at": existing_summary["updated_at"]
+                        }))
+                    else:
+                        # No summary exists yet
+                        await websocket.send_text(json.dumps({
+                            "type": "chat_summary",
+                            "summary": None, # Indicates no summary
+                            "updated_at": None
+                        }))
+
+            # --- GENERATE SUMMARY (With Checks) ---
+            elif payload.get("type") == "generate_summary":
+                target_user = payload.get("with_user")
+                print(f"🧠 DEBUG: generate_summary request for {username} -> {target_user}")
+                if target_user:
+                    # 1. Check Existing Summary
+                    existing_summary = await summaries_collection.find_one({
+                        "participants": {"$all": [username, target_user]}
+                    })
+                    
+                    should_generate = False
+                    
+                    if not existing_summary:
+                        print("🧠 DEBUG: No existing summary found. Generating new.")
+                        # Nevr generated -> Go ahead
+                        should_generate = True
+                    else:
+                        last_gen_time = datetime.fromisoformat(existing_summary["updated_at"])
+                        time_diff = datetime.now() - last_gen_time
+                        print(f"🧠 DEBUG: Last generated: {last_gen_time}, Time diff: {time_diff}")
+                        
+                        # Rule 1: Must be > 24 hours
+                        if time_diff.total_seconds() > 86400: # 24 hours
+                            print("🧠 DEBUG: > 24 hours passed. Checking for new messages...")
+                            # Rule 2: Must have new messages since last generation
+                            # Find messages after last_gen_time
+                            new_msgs_count = await messages_collection.count_documents({
+                                "$or": [
+                                    {"sender": username, "target": target_user},
+                                    {"sender": target_user, "target": username}
+                                ],
+                                "timestamp": {"$gt": existing_summary["updated_at"]}
+                            })
+                            print(f"🧠 DEBUG: New messages count: {new_msgs_count}")
+                            
+                            if new_msgs_count > 0:
+                                should_generate = True
+                            else:
+                                print("🧠 DEBUG: No new messages. Skipping generation.")
+                        else:
+                            print("🧠 DEBUG: < 24 hours. Skipping generation.")
+                    
+                    if should_generate:
+                        print("🧠 DEBUG: Proceeding to generate summary...")
+                        # Fetch conversation history
+                        msgs = await messages_collection.find({
+                            "$or": [
+                                {"sender": username, "target": target_user},
+                                {"sender": target_user, "target": username}
+                            ]
+                        }).sort("timestamp", 1).to_list(length=100) # Last 100
+                        
+                        print(f"🧠 DEBUG: Fetched {len(msgs)} messages for context.")
+
+                        # Generate (BLOCKING CALL -> Thread Pool)
+                        import asyncio
+                        from functools import partial
+                        from chat_summary import generate_chat_summary
+                        
+                        loop = asyncio.get_running_loop()
+                        # Run synchronous API call in a thread
+                        summary_data = await loop.run_in_executor(
+                            None, 
+                            partial(generate_chat_summary, msgs)
+                        )
+                        print(f"🧠 DEBUG: Summary generated")
+                        
+                        # Save to DB
+                        print("🧠 DEBUG: Saving to DB...")
+                        if existing_summary:
+                            # Update existing document by ID to avoid query strictness issues
+                            await summaries_collection.update_one(
+                                {"_id": existing_summary["_id"]},
+                                {"$set": {
+                                    "summary": summary_data["summary"],
+                                    "updated_at": summary_data["updated_at"]
+                                }}
+                            )
+                        else:
+                            # Insert new document with strict sorted participants
+                            # Using exact match query + upsert ensures clean insertion
+                            sorted_participants = sorted([username, target_user])
+                            await summaries_collection.update_one(
+                                {"participants": sorted_participants},
+                                {"$set": {
+                                    "participants": sorted_participants,
+                                    "summary": summary_data["summary"],
+                                    "updated_at": summary_data["updated_at"]
+                                }},
+                                upsert=True
+                            )
+                        
+                        # Send back new summary
+                        await websocket.send_text(json.dumps({
+                            "type": "chat_summary",
+                            "summary": summary_data["summary"],
+                            "updated_at": summary_data["updated_at"]
+                        }))
+                    else:
+                        print("🧠 DEBUG: Generation skipped. Sending 'no_update' response.")
+                        # Did NOT generate (Rate limited or No new messages)
+                        # Start by reusing the old one if it exists
+                        if existing_summary:
+                            await websocket.send_text(json.dumps({
+                                "type": "chat_summary_no_update",
+                                "message": "Summary is up to date (Wait 24h or continue chatting)",
+                                "summary": existing_summary["summary"],
+                                "updated_at": existing_summary["updated_at"]
+                            }))  
+                        else:
+                             # Should technically be covered by "if not existing_summary -> should_generate=True"
+                             # But purely safe fallback
+                             pass
+
+            # --- TYPING INDICATOR ---
+            elif payload.get("type") == "typing":
+                target = payload.get("target")
+                is_typing = payload.get("isTyping", False)
+                
+                # Relay to target user if online
+                if target in manager.active_connections:
+                    try:
+                        await manager.active_connections[target].send_text(json.dumps({
+                            "type": "typing_indicator",
+                            "username": username,
+                            "isTyping": is_typing
+                        }))
+                    except:
+                        pass
+
     except WebSocketDisconnect:
-        manager.disconnect(username)
-        await users_collection.update_one({"username": username}, {"$set": {"status": "offline"}})
-        await manager.broadcast_status(username, "offline")
+        await manager.disconnect(username)
     except Exception as e:
         print(f"Error in websocket: {e}")
-        manager.disconnect(username)
-        await users_collection.update_one({"username": username}, {"$set": {"status": "offline"}})
-        await manager.broadcast_status(username, "offline")
+        await manager.disconnect(username)

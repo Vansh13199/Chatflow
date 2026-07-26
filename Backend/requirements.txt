@@ -1,5 +1,33 @@
+# Core Web Framework
 fastapi
-uvicorn[standard]
+uvicorn
+websockets
+python-multipart
+
+# Database
 motor>=3.6
 pymongo>=4.9,<5.0
 dnspython
+
+# AI & Utilities
+requests
+python-dotenv
+tenacity
+google-auth
+pydantic
+pydantic_core
+typing_extensions
+annotated-types
+anyio
+certifi
+charset-normalizer
+distro
+h11
+httpcore
+httpx
+idna
+pyasn1
+pyasn1_modules
+rsa
+sniffio
+urllib3
