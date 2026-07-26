@@ -223,6 +223,11 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             data = await websocket.receive_text()
             payload = json.loads(data)
             
+            # --- HEARTBEAT PING/PONG ---
+            if payload.get("type") == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}))
+                continue
+
             # --- SENDING TEXT ---
             if payload.get("type") in ["text", "image"]:
                 msg_id = payload.get("id") or datetime.now().timestamp()
@@ -279,3 +284,5 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
     except Exception as e:
         print(f"Error in websocket: {e}")
         manager.disconnect(username)
+        await users_collection.update_one({"username": username}, {"$set": {"status": "offline"}})
+        await manager.broadcast_status(username, "offline")

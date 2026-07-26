@@ -79,130 +79,135 @@ export const useWebSocket = (myUsername) => {
 
     useEffect(() => {
         if (!myUsername) return;
-        if (socketRef.current) return;
 
-        // Load existing messages first
-        loadChatHistory();
+        let heartbeatInterval = null;
 
-        console.log(`🔌 Connecting to ${WS_URL}/ws/${myUsername}...`);
-        const ws = new WebSocket(`${WS_URL}/ws/${myUsername}`);
-        socketRef.current = ws;
+        const connect = () => {
+            if (socketRef.current) return;
 
-        ws.onopen = () => {
-            console.log("✅ Connected to Backend");
-            setIsConnected(true);
-            reconnectAttempts.current = 0; // Reset on successful connection
-        };
+            console.log(`🔌 Connecting to ${WS_URL}/ws/${myUsername}...`);
+            const ws = new WebSocket(`${WS_URL}/ws/${myUsername}`);
+            socketRef.current = ws;
 
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
+            ws.onopen = () => {
+                console.log("✅ Connected to Backend");
+                setIsConnected(true);
+                reconnectAttempts.current = 0;
 
-                // ... (Status & Tick updates remain here) ...
-                // ... (Status & Tick updates remain here) ...
-                if (data.type === "message_deleted") {
-                    const deletedId = data.id;
+                // Heartbeat: Send ping every 25s to keep connection alive on Render
+                if (heartbeatInterval) clearInterval(heartbeatInterval);
+                heartbeatInterval = setInterval(() => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: "ping" }));
+                    }
+                }, 25000);
+            };
 
-                    setConversations(prev => {
-                        const newConvos = { ...prev };
-                        // We don't know exactly which user chat this message belongs to easily,
-                        // so we scan all chats and remove it. (Safe & Simple)
-                        Object.keys(newConvos).forEach(user => {
-                            newConvos[user] = newConvos[user].filter(msg => msg.id !== deletedId);
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    // Ignore pong responses
+                    if (data.type === "pong") return;
+
+                    if (data.type === "message_deleted") {
+                        const deletedId = data.id;
+                        setConversations(prev => {
+                            const newConvos = { ...prev };
+                            Object.keys(newConvos).forEach(user => {
+                                newConvos[user] = newConvos[user].filter(msg => msg.id !== deletedId);
+                            });
+                            return newConvos;
                         });
-                        return newConvos;
-                    });
-                    return;
+                        return;
+                    }
+
+                    if (data.type === "chat_cleared") {
+                        const partner = data.partner;
+                        setConversations(prev => ({
+                            ...prev,
+                            [partner]: []
+                        }));
+                        return;
+                    }
+                    if (data.type === "chat_removed") {
+                        const partner = data.partner;
+                        setConversations(prev => {
+                            const newConvos = { ...prev };
+                            delete newConvos[partner];
+                            return newConvos;
+                        });
+                        return;
+                    }
+
+                    // 1. STATUS UPDATE (Online/Offline)
+                    if (data.type === "status_update") {
+                        setUserStatuses(prev => ({ ...prev, [data.username]: data.status }));
+                        return;
+                    }
+
+                    // 2. MESSAGE TICK UPDATE (Sent -> Delivered)
+                    if (data.type === "message_status_update") {
+                        updateMessageStatus(data.id, data.status);
+                        return;
+                    }
+
+                    // 3. BULK READ RECEIPT (User read my messages)
+                    if (data.type === "bulk_read_update") {
+                        setConversations(prev => {
+                            const updatedConvos = { ...prev };
+                            if (updatedConvos[data.reader]) {
+                                updatedConvos[data.reader] = updatedConvos[data.reader].map(msg =>
+                                    msg.sender === myUsername ? { ...msg, status: 'read' } : msg
+                                );
+                            }
+                            return updatedConvos;
+                        });
+                        return;
+                    }
+
+                    // 4. NORMAL MESSAGE
+                    const otherUser = data.sender === myUsername ? data.target : data.sender;
+
+                    if (data.sender !== myUsername) {
+                        const audio = new Audio('/notification.mp3');
+                        audio.play().catch(e => { });
+                    }
+
+                    addMessage(otherUser, data);
+
+                } catch (e) {
+                    console.error("Error parsing WebSocket message:", e);
                 }
+            };
 
-                // 👇 CASE A: CLEAR HISTORY (Keep sidebar, empty messages)
-                if (data.type === "chat_cleared") {
-                    const partner = data.partner;
-                    setConversations(prev => ({
-                        ...prev,
-                        [partner]: [] // ✅ Set to empty array (Sidebar stays)
-                    }));
-                    return;
-                }
-                if (data.type === "chat_removed") {
-                    const partner = data.partner;
-                    setConversations(prev => {
-                        const newConvos = { ...prev };
-                        delete newConvos[partner]; // ✅ Remove Key (Sidebar item disappears)
-                        return newConvos;
-                    });
-                    return;
-                }
+            ws.onclose = () => {
+                console.log("❌ Disconnected from Server");
+                setIsConnected(false);
+                socketRef.current = null;
+                if (heartbeatInterval) clearInterval(heartbeatInterval);
 
-                // 1. STATUS UPDATE (Online/Offline)
-                if (data.type === "status_update") {
-                    setUserStatuses(prev => ({ ...prev, [data.username]: data.status }));
-                    return;
-                }
+                const reconnectDelay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts.current));
+                reconnectAttempts.current += 1;
+                console.log(`🔄 Reconnecting in ${reconnectDelay / 1000}s...`);
 
-                // 2. MESSAGE TICK UPDATE (Sent -> Delivered)
-                if (data.type === "message_status_update") {
-                    updateMessageStatus(data.id, data.status);
-                    return;
-                }
+                reconnectTimeout.current = setTimeout(() => {
+                    if (myUsername && !socketRef.current) {
+                        connect();
+                    }
+                }, reconnectDelay);
+            };
 
-                // 3. BULK READ RECEIPT (User read my messages)
-                if (data.type === "bulk_read_update") {
-                    setConversations(prev => {
-                        const updatedConvos = { ...prev };
-                        if (updatedConvos[data.reader]) {
-                            updatedConvos[data.reader] = updatedConvos[data.reader].map(msg =>
-                                msg.sender === myUsername ? { ...msg, status: 'read' } : msg
-                            );
-                        }
-                        return updatedConvos;
-                    });
-                    return;
-                }
-
-                // 4. NORMAL MESSAGE
-                const otherUser = data.sender === myUsername ? data.target : data.sender;
-
-                // Play Sound if receiving (not from self)
-                if (data.sender !== myUsername) {
-                    const audio = new Audio('/notification.mp3');
-                    audio.play().catch(e => { });
-                }
-
-                addMessage(otherUser, data);
-
-            } catch (e) {
-                console.error("Error parsing WebSocket message:", e);
-            }
+            ws.onerror = (e) => console.error("WebSocket error:", e);
         };
 
-        ws.onclose = () => {
-            console.log("❌ Disconnected from Server");
-            setIsConnected(false);
-            socketRef.current = null;
-
-            // Auto-reconnect with exponential backoff
-            const reconnectDelay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts.current));
-            reconnectAttempts.current += 1;
-            console.log(`🔄 Reconnecting in ${reconnectDelay / 1000}s...`);
-
-            reconnectTimeout.current = setTimeout(() => {
-                if (myUsername && !socketRef.current) {
-                    console.log(`🔌 Attempting reconnect to ${WS_URL}/ws/${myUsername}...`);
-                    const newWs = new WebSocket(`${WS_URL}/ws/${myUsername}`);
-                    socketRef.current = newWs;
-
-                    newWs.onopen = ws.onopen;
-                    newWs.onmessage = ws.onmessage;
-                    newWs.onclose = ws.onclose;
-                    newWs.onerror = (e) => console.error("WebSocket error:", e);
-                }
-            }, reconnectDelay);
-        };
+        loadChatHistory();
+        connect();
 
         return () => {
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
             if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current);
-            if (ws.readyState === 1) ws.close();
+            if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.close();
         };
     }, [myUsername, addMessage, updateMessageStatus]);
 
