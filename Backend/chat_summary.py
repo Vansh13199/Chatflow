@@ -55,7 +55,8 @@ Conversation:
 
     def call_hf_api(prompt_text, api_key):
         # We use Zephyr 7B Beta as it is highly capable and typically available on the free Inference API
-        url = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
+        # Using the router endpoint to bypass DNS issues on some ISPs with the api-inference domain
+        url = "https://router.huggingface.co/hf-inference/models/HuggingFaceH4/zephyr-7b-beta"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
