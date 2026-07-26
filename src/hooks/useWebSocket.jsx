@@ -5,27 +5,21 @@ const isDev = import.meta.env.DEV; // Vite provides this boolean
 
 let API_BASE, WS_BASE;
 
-const envApiUrl = import.meta.env.VITE_BACKEND_URL;
+const envApiUrl = import.meta.env.VITE_API_URL;
+const envWsUrl = import.meta.env.VITE_WS_URL;
 
-if (envApiUrl) {
+if (envApiUrl && envWsUrl) {
     API_BASE = envApiUrl;
-    WS_BASE = envApiUrl.startsWith('https') 
-        ? envApiUrl.replace('https://', 'wss://') 
-        : envApiUrl.replace('http://', 'ws://');
+    WS_BASE = envWsUrl;
 } else if (isDev) {
     // Local Development (Frontend 5173 -> Backend 8000)
     const API_HOST = window.location.hostname || '127.0.0.1';
     API_BASE = `http://${API_HOST}:8000`;
     WS_BASE = `ws://${API_HOST}:8000`;
 } else {
-    // Production (Nginx Proxy served from same origin)
-    // API -> /api
-    // WS -> /ws
-    const host = window.location.host; // Includes port if any (e.g. example.com or 192.168.1.5:80)
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-
-    API_BASE = `/api`; // Nginx will proxy /api to backend
-    WS_BASE = `${protocol}//${host}`; // Nginx will proxy /ws to backend
+    // Fallback if env vars are missing
+    API_BASE = 'https://chatflow-t5s3.onrender.com';
+    WS_BASE = 'wss://chatflow-t5s3.onrender.com';
 }
 
 // Notification sound - unlocks on first user interaction
