@@ -40,23 +40,22 @@ def generate_chat_summary(messages: list) -> dict:
         content = msg.get("message", "")
         conversation_text += f"{sender}: {content}\n"
 
-    # 3. Construct Prompt (Zephyr chat template format)
-    prompt_text = f"""<|system|>
-You are an intelligent assistant summarizing a chat conversation.
+    # 3. Construct Prompt (Mistral instruction format)
+    prompt_text = f"""<s>[INST] You are an intelligent assistant summarizing a chat conversation.
 Summarize the following conversation in 3-5 concise bullet points.
 Focus on the main topics discussed, key decisions, or interesting updates.
 Do not use asterisks or dashes for bullets in your raw output, just put each point on a new line.
-Keep it casual but clear.</s>
-<|user|>
+Keep it casual but clear.
+
 Conversation:
-{conversation_text}</s>
-<|assistant|>
+{conversation_text}
+[/INST]
 """
 
     def call_hf_api(prompt_text, api_key):
-        # We use Zephyr 7B Beta as it is highly capable and typically available on the free Inference API
+        # We use Mistral 7B Instruct v0.3 as it is highly capable and supported by the new HF Serverless Inference Router
         # Using the router endpoint to bypass DNS issues on some ISPs with the api-inference domain
-        url = "https://router.huggingface.co/hf-inference/models/HuggingFaceH4/zephyr-7b-beta"
+        url = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
