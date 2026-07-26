@@ -40,29 +40,30 @@ def generate_chat_summary(messages: list) -> dict:
         content = msg.get("message", "")
         conversation_text += f"{sender}: {content}\n"
 
-    # 3. Construct Prompt (BART format - pure transcript)
-    prompt_text = f"The following is a conversation between users:\n{conversation_text}\nSummary:"
-
-    def call_hf_api(prompt_text, api_key):
-        # We use BART Large CNN as it is a dedicated summarization model natively supported by the new HF Serverless Inference Router
-        url = "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn"
+    # 3. Construct Prompt (Messages array for Chat Completions API)
+    system_prompt = "You are an intelligent assistant summarizing a chat conversation. Summarize the following conversation in 3-5 concise bullet points. Focus on the main topics discussed, key decisions, or interesting updates. Do not use asterisks or dashes for bullets in your raw output, just put each point on a new line. Keep it casual but clear."
+    
+    def call_hf_api(conversation, api_key):
+        # We use Qwen 2.5 7B Instruct via the HF Inference Providers Router
+        url = "https://router.huggingface.co/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         payload = {
-            "inputs": prompt_text,
-            "parameters": {
-                "max_length": 150,
-                "min_length": 30,
-                "temperature": 0.5
-            }
+            "model": "Qwen/Qwen2.5-7B-Instruct",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Conversation:\n{conversation}\n\nSummary:"}
+            ],
+            "max_tokens": 200,
+            "temperature": 0.3
         }
         return requests.post(url, headers=headers, json=payload, timeout=15)
 
     try:
         # 4. Call Hugging Face API
-        response = call_hf_api(prompt_text, api_key)
+        response = call_hf_api(conversation_text, api_key)
         
         if response.status_code != 200:
             raise Exception(f"API Error {response.status_code}: {response.text}")
@@ -71,25 +72,19 @@ def generate_chat_summary(messages: list) -> dict:
         
         # 5. Parse Response
         try:
-            if isinstance(result, list) and len(result) > 0 and 'summary_text' in result[0]:
-                summary_text = result[0]['summary_text']
-            elif isinstance(result, list) and len(result) > 0 and 'generated_text' in result[0]:
-                summary_text = result[0]['generated_text']
-            else:
-                summary_text = str(result)
+            summary_text = result['choices'][0]['message']['content']
         except Exception as e:
             raise Exception(f"Unexpected API response structure: {str(e)} | Response: {str(result)}")
         
-        # Split paragraph into sentences to fake bullet points
-        sentences = [s.strip() for s in summary_text.replace('!', '.').replace('?', '.').split('.') if len(s.strip()) > 10]
+        # Split into bullet points
+        lines = summary_text.strip().split('\n')
+        bullet_points = [line.strip().lstrip('-•* ').strip() for line in lines if line.strip()]
         
-        if not sentences:
-            sentences = [summary_text]
-            
-        bullet_points = sentences[:5] # Keep max 5 bullet points
+        if not bullet_points:
+            bullet_points = ["Could not generate a summary at this time."]
 
         return {
-            "summary": bullet_points,
+            "summary": bullet_points[:5],
             "updated_at": datetime.now().isoformat()
         }
 
