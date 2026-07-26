@@ -1,10 +1,13 @@
-import React, { useState, useRef, useEffect } from 'react';
-import EmojiPicker from 'emoji-picker-react';
+import React, { useState, useRef, useEffect, memo, lazy, Suspense } from 'react';
 
-const MessageInput = ({ onSend }) => {
+// Lazy load the heavy emoji picker component
+const EmojiPicker = lazy(() => import('emoji-picker-react'));
+
+const MessageInput = memo(({ onSend, onTyping }) => {
   const [text, setText] = useState('');
   const [showPicker, setShowPicker] = useState(false);
   const textareaRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
 
   // Maximum height before scrolling starts (in pixels)
   const MAX_HEIGHT = 120;
@@ -13,8 +16,8 @@ const MessageInput = ({ onSend }) => {
   useEffect(() => {
     if (textareaRef.current) {
       // 1. Reset height to 'auto' to correctly calculate the new shrink/grow size
-      textareaRef.current.style.height = 'auto'; 
-      
+      textareaRef.current.style.height = 'auto';
+
       // 2. Calculate the correct height (capped at MAX_HEIGHT)
       const scrollHeight = textareaRef.current.scrollHeight;
       textareaRef.current.style.height = `${Math.min(scrollHeight, MAX_HEIGHT)}px`;
@@ -28,9 +31,35 @@ const MessageInput = ({ onSend }) => {
     }
   }, [text]);
 
+  // Handle typing indicator
+  const handleTextChange = (e) => {
+    setText(e.target.value);
+
+    // Send "typing" event
+    if (onTyping && e.target.value.length > 0) {
+      onTyping(true);
+
+      // Clear previous timeout
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+
+      // Set timeout to stop typing after 1.5 seconds of inactivity
+      typingTimeoutRef.current = setTimeout(() => {
+        onTyping(false);
+      }, 1500);
+    } else if (onTyping && e.target.value.length === 0) {
+      onTyping(false);
+    }
+  };
+
   const handleSend = (e) => {
     e.preventDefault();
     if (text.trim()) {
+      // Stop typing indicator
+      if (onTyping) onTyping(false);
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+
       onSend(text);
       setText('');
       setShowPicker(false);
@@ -44,6 +73,7 @@ const MessageInput = ({ onSend }) => {
 
   const onEmojiClick = (emojiData) => {
     setText((prev) => prev + emojiData.emoji);
+    if (onTyping) onTyping(true);
   };
 
   const handleKeyDown = (e) => {
@@ -55,26 +85,32 @@ const MessageInput = ({ onSend }) => {
 
   return (
     <div className="p-3 bg-white dark:bg-gray-800 border-t border-gray-100 dark:border-gray-700 relative">
-      
-      {/* EMOJI POPUP */}
+
+      {/* EMOJI POPUP - Lazy loaded */}
       {showPicker && (
         <>
-        <div className="fixed inset-0 z-40" onClick={() => setShowPicker(false)}></div>
-        <div className="absolute bottom-20 left-4 z-50 shadow-2xl rounded-xl">
-           <EmojiPicker 
-             onEmojiClick={onEmojiClick} 
-             theme="auto"
-             searchDisabled={false}
-             skinTonesDisabled={true}
-             height={350}
-             width={300}
-           />
-        </div>
+          <div className="fixed inset-0 z-40" onClick={() => setShowPicker(false)}></div>
+          <div className="absolute bottom-20 left-4 z-50 shadow-2xl rounded-xl">
+            <Suspense fallback={
+              <div className="w-[300px] h-[350px] bg-white dark:bg-gray-700 rounded-xl flex items-center justify-center">
+                <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full"></div>
+              </div>
+            }>
+              <EmojiPicker
+                onEmojiClick={onEmojiClick}
+                theme="auto"
+                searchDisabled={false}
+                skinTonesDisabled={true}
+                height={350}
+                width={300}
+              />
+            </Suspense>
+          </div>
         </>
       )}
 
       <form onSubmit={handleSend} className="flex items-end gap-2 max-w-4xl mx-auto">
-        
+
         {/* Emoji Button */}
         <button
           type="button"
@@ -88,21 +124,21 @@ const MessageInput = ({ onSend }) => {
 
         {/* 📝 Auto-Growing & Scrollable Text Area */}
         <div className="flex-1 bg-gray-50 dark:bg-gray-700 rounded-2xl border border-gray-200 dark:border-gray-600 focus-within:ring-2 focus-within:ring-blue-500/50 focus-within:border-blue-500 transition-all">
-            <textarea
-                ref={textareaRef}
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Type a message..."
-                rows={1}
-                // Changed overflow-hidden to allow dynamic scrolling
-                className="w-full py-3 px-4 bg-transparent dark:text-white focus:outline-none resize-none leading-relaxed custom-scrollbar"
-                style={{ 
-                    minHeight: '48px', 
-                    maxHeight: `${MAX_HEIGHT}px`,
-                    overflowY: 'hidden' // Initial state
-                }}
-            />
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={handleTextChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Type a message..."
+            rows={1}
+            // Changed overflow-hidden to allow dynamic scrolling
+            className="w-full py-3 px-4 bg-transparent dark:text-white focus:outline-none resize-none leading-relaxed custom-scrollbar"
+            style={{
+              minHeight: '48px',
+              maxHeight: `${MAX_HEIGHT}px`,
+              overflowY: 'hidden' // Initial state
+            }}
+          />
         </div>
 
         {/* Send Button */}
@@ -118,6 +154,8 @@ const MessageInput = ({ onSend }) => {
       </form>
     </div>
   );
-};
+});
+
+MessageInput.displayName = 'MessageInput';
 
 export default MessageInput;

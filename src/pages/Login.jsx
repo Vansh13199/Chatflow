@@ -23,10 +23,10 @@ const Login = ({ onLogin }) => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 via-purple-600 to-indigo-800 p-4">
-      
-      {/* Card Container */}
-      <div className="bg-white dark:bg-gray-900 w-full max-w-md p-8 rounded-2xl shadow-2xl transform transition-all hover:scale-[1.01]">
-        
+
+      {/* Card Container - Always dark mode */}
+      <div className="bg-gray-900 w-full max-w-md p-8 rounded-2xl shadow-2xl transform transition-all hover:scale-[1.01]">
+
         {/* Logo / Header */}
         <div className="text-center mb-8">
           <div className="w-16 h-16 bg-gradient-to-tr from-blue-500 to-purple-500 rounded-xl mx-auto flex items-center justify-center mb-4 shadow-lg">
@@ -34,14 +34,14 @@ const Login = ({ onLogin }) => {
               <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-2.281l-9.8-9.8a2.126 2.126 0 01-.476 2.281 4.25 4.25 0 00-9.346 8.334c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136.847 2.1 1.98 2.193.34.027.68.052 1.02.072v3.091l3-3c1.354 0 2.694-.055 4.02-.163a2.115 2.115 0 01.825-.242" />
             </svg>
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Welcome Back</h1>
-          <p className="text-gray-500 dark:text-gray-400">Enter your username to start chatting</p>
+          <h1 className="text-3xl font-bold text-white mb-2">Welcome Back</h1>
+          <p className="text-gray-400">Enter your username to start chatting</p>
         </div>
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
-            <label htmlFor="username" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-2">
               Username
             </label>
             <div className="relative">
@@ -50,22 +50,22 @@ const Login = ({ onLogin }) => {
                 id="username"
                 value={username}
                 // 👇 BLOCKING LOGIC: Stops typing after 16 chars
-                maxLength={32} 
+                maxLength={32}
                 onChange={(e) => {
-                    setUsername(e.target.value);
-                    if (error) setError(''); // Clear error while typing
+                  setUsername(e.target.value);
+                  if (error) setError(''); // Clear error while typing
                 }}
-                className={`w-full px-4 py-3 rounded-xl border bg-gray-50 dark:bg-gray-800 dark:text-white focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none ${error ? 'border-red-500' : 'border-gray-200 dark:border-gray-700'}`}
+                className={`w-full px-4 py-3 rounded-xl border bg-gray-800 text-white placeholder-gray-500 focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none ${error ? 'border-red-500' : 'border-gray-700'}`}
                 placeholder="e.g. Vansh"
                 autoFocus
               />
-              
+
               {/* Character Count Hint (Updates dynamically) */}
-              <div className={`absolute right-3 top-3.5 text-xs transition-colors ${username.length === 32  ? 'text-red-500 font-bold' : 'text-gray-400'}`}>
+              <div className={`absolute right-3 top-3.5 text-xs transition-colors ${username.length === 32 ? 'text-red-500 font-bold' : 'text-gray-500'}`}>
                 {username.length}/32
               </div>
             </div>
-            
+
             {/* Error Message */}
             {error && (
               <p className="mt-2 text-sm text-red-500 flex items-center gap-1 animate-pulse">
@@ -86,7 +86,7 @@ const Login = ({ onLogin }) => {
         </form>
 
         {/* Footer Text */}
-        <p className="mt-8 text-center text-sm text-gray-400">
+        <p className="mt-8 text-center text-sm text-gray-500">
           By joining, you agree to our Terms & Privacy Policy.
         </p>
       </div>
