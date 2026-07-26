@@ -6,8 +6,7 @@ import textwrap
 
 def generate_chat_summary(messages: list) -> dict:
     """
-    Generates an AI-powered summary of the conversation using Google Gemini via REST API.
-    (Compatible with Python 3.8+)
+    Generates an AI-powered summary of the conversation using Hugging Face Inference API.
     
     Args:
         messages (list): List of message dictionaries containing 'message', 'sender', 'timestamp'.
@@ -25,9 +24,9 @@ def generate_chat_summary(messages: list) -> dict:
         }
 
     # 1. Check API Key
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("HUGGINGFACE_API_KEY")
     if not api_key:
-        print("⚠️ GEMINI_API_KEY not found in environment variables.")
+        print("⚠️ HUGGINGFACE_API_KEY not found in environment variables.")
         return {
             "summary": ["Smart summary is unavailable (API Key missing)."],
             "updated_at": datetime.now().isoformat()
@@ -41,52 +40,53 @@ def generate_chat_summary(messages: list) -> dict:
         content = msg.get("message", "")
         conversation_text += f"{sender}: {content}\n"
 
-    # 3. Construct Prompt
-    prompt_text = textwrap.dedent(f"""\
-        You are an intelligent assistant summarizing a chat conversation.
-        Summarize the following conversation in 3-5 concise bullet points.
-        Focus on the main topics discussed, key decisions, or interesting updates.
-        Do not use asterisks or dashes for bullets in your raw output, just put each point on a new line.
-        Keep it casual but clear.
+    # 3. Construct Prompt (Zephyr chat template format)
+    prompt_text = f"""<|system|>
+You are an intelligent assistant summarizing a chat conversation.
+Summarize the following conversation in 3-5 concise bullet points.
+Focus on the main topics discussed, key decisions, or interesting updates.
+Do not use asterisks or dashes for bullets in your raw output, just put each point on a new line.
+Keep it casual but clear.</s>
+<|user|>
+Conversation:
+{conversation_text}</s>
+<|assistant|>
+"""
 
-        Conversation:
-        {conversation_text}
-        
-        Summary:
-    """)
-
-    # Helper function for API calls
-    def call_gemini_api(model_name, prompt_text, api_key):
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-        headers = {"Content-Type": "application/json"}
-        payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
-        return requests.post(url, headers=headers, json=payload, timeout=10)
+    def call_hf_api(prompt_text, api_key):
+        # We use Zephyr 7B Beta as it is highly capable and typically available on the free Inference API
+        url = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "inputs": prompt_text,
+            "parameters": {
+                "max_new_tokens": 250,
+                "temperature": 0.3,
+                "return_full_text": False
+            }
+        }
+        return requests.post(url, headers=headers, json=payload, timeout=15)
 
     try:
-        # 4. Call Gemini API (REST API via requests)
-        # Try primary model first: gemini-1.5-flash
-        primary_model = "gemini-2.5-flash-lite"
-        response = call_gemini_api(primary_model, prompt_text, api_key)
+        # 4. Call Hugging Face API
+        response = call_hf_api(prompt_text, api_key)
         
-        # If 404 (Not Found), try fallback model: gemini-pro
-        if response.status_code == 404:
-            print(f"⚠️ {primary_model} not found (404). Falling back to gemini-pro...")
-            fallback_model = "gemini-pro"
-            response = call_gemini_api(fallback_model, prompt_text, api_key)
-
         if response.status_code != 200:
             raise Exception(f"API Error {response.status_code}: {response.text}")
             
         result = response.json()
         
         # 5. Parse Response
-        # Structure: result['candidates'][0]['content']['parts'][0]['text']
         try:
-            summary_text = result['candidates'][0]['content']['parts'][0]['text']
-        except (KeyError, IndexError) as e:
-            # Handle safety ratings blocking content
-            if "promptFeedback" in result:
-                raise Exception(f"Content blocked by safety filters: {result.get('promptFeedback')}")
+            # Inference API returns a list with a dict containing 'generated_text'
+            if isinstance(result, list) and len(result) > 0 and 'generated_text' in result[0]:
+                summary_text = result[0]['generated_text']
+            else:
+                summary_text = str(result)
+        except Exception as e:
             raise Exception(f"Unexpected API response structure: {str(e)} | Response: {str(result)}")
         
         lines = summary_text.strip().split('\n')
@@ -101,7 +101,7 @@ def generate_chat_summary(messages: list) -> dict:
         }
 
     except Exception as e:
-        print(f"❌ Gemini API Error: {e}")
+        print(f"❌ Hugging Face API Error: {e}")
         return {
             "summary": [f"Failed to generate summary: {str(e)}"],
             "updated_at": datetime.now().isoformat()
